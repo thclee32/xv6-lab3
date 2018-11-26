@@ -223,28 +223,29 @@ allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
 {
   char *mem;
   uint a;
-
-  if(newsz >= KERNBASE)
+  
+  if(newsz > KERNBASE)
     return 0;
   if(newsz < oldsz)
-    return oldsz;
+    return oldsz; 
 
-  a = PGROUNDUP(oldsz);
-  for(; a < newsz; a += PGSIZE){
-    mem = kalloc();
-    if(mem == 0){
-      cprintf("allocuvm out of memory\n");
-      deallocuvm(pgdir, newsz, oldsz);
-      return 0;
+
+    a = PGROUNDUP(oldsz);
+    for(; a < newsz; a += PGSIZE){
+      mem = kalloc();
+      if(mem == 0){
+        cprintf("allocuvm out of memory\n");
+        deallocuvm(pgdir, newsz, oldsz);
+        return 0;
+      }
+      memset(mem, 0, PGSIZE);
+      if(mappages(pgdir, (char*)a, PGSIZE, V2P(mem), PTE_W|PTE_U) < 0){
+        cprintf("allocuvm out of memory (2)\n");
+        deallocuvm(pgdir, newsz, oldsz);
+        kfree(mem);
+        return 0;
+      }
     }
-    memset(mem, 0, PGSIZE);
-    if(mappages(pgdir, (char*)a, PGSIZE, V2P(mem), PTE_W|PTE_U) < 0){
-      cprintf("allocuvm out of memory (2)\n");
-      deallocuvm(pgdir, newsz, oldsz);
-      kfree(mem);
-      return 0;
-    }
-  }
   return newsz;
 }
 
@@ -313,7 +314,7 @@ clearpteu(pde_t *pgdir, char *uva)
 // Given a parent process's page table, create a copy
 // of it for a child.
 pde_t*
-copyuvm(pde_t *pgdir, uint sz)
+copyuvm(pde_t *pgdir, uint sz, uint stack_sz)
 {
   pde_t *d;
   pte_t *pte;
@@ -324,9 +325,9 @@ copyuvm(pde_t *pgdir, uint sz)
     return 0;
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walkpgdir(pgdir, (void *) i, 0)) == 0)
-      panic("copyuvm: pte should exist");
+      panic("copyuvm: pte should exist(HEAP)");
     if(!(*pte & PTE_P))
-      panic("copyuvm: page not present");
+      panic("copyuvm: page not present(HEAP)");
     pa = PTE_ADDR(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)
@@ -335,6 +336,26 @@ copyuvm(pde_t *pgdir, uint sz)
     if(mappages(d, (void*)i, PGSIZE, V2P(mem), flags) < 0)
       goto bad;
   }
+  
+
+  if(stack_sz == 0) {
+    return d;
+  }
+  //second for loop to copy our new stack
+  for(i = stack_sz; i < USERTOP; i += PGSIZE) {
+    if((pte = walkpgdir(pgdir, (void *) i, 0)) == 0)
+      panic("copyuvm: pte should exist(STACK)");
+    if(!(*pte & PTE_P))
+      panic("copyuvm: page not present(STACK)");
+    pa = PTE_ADDR(*pte);
+    flags = PTE_FLAGS(*pte);
+    if((mem = kalloc()) == 0)
+      goto bad;
+    memmove(mem, (char*)P2V(pa), PGSIZE);
+    if(mappages(d, (void*)i, PGSIZE, V2P(mem), flags) < 0)
+      goto bad;
+  }
+
   return d;
 
 bad:

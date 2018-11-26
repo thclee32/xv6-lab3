@@ -14,6 +14,9 @@ extern uint vectors[];  // in vectors.S: array of 256 entry pointers
 struct spinlock tickslock;
 uint ticks;
 
+uint nextdown;
+uint address;
+
 void
 tvinit(void)
 {
@@ -77,6 +80,36 @@ trap(struct trapframe *tf)
             cpuid(), tf->cs, tf->eip);
     lapiceoi();
     break;
+  case T_PGFLT:
+    address = rcr2();
+    cprintf("Page fault at: %x\n", address);
+    
+    if(address < myproc()->stack_sz && address > myproc()->stack_sz - PGSIZE) {
+      nextdown = myproc()->stack_sz - PGSIZE;
+      if(allocuvm(myproc()->pgdir, nextdown, myproc()->stack_sz) == 0) {
+        myproc()->killed = 1;
+        break;
+      }
+      else {
+        myproc()->stack_sz = nextdown;
+        break;
+      }
+    }
+    
+    /*
+    if(rcr2() < myproc()->stack_sz){
+      if(rcr2() < myproc()->stack_sz){
+        panic("Address is not in the next available page.\n");
+      }
+      else{
+        //CHECK IF WE USE RCR2 OR IF WE HAVE TO ROUND DOWN FIRST
+        allocuvm(myproc()->pgdir, rcr2(), USERTOP);
+        myproc()->stack_sz -= PGSIZE;
+      }
+    }
+    
+    break;
+    */
 
   //PAGEBREAK: 13
   default:
